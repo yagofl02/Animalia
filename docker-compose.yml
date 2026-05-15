@@ -1,11 +1,68 @@
-version: "3.9"
-
 services:
-  animalia:
-    build: .
+  mysql:
+    image: mysql:8.0
+    container_name: animalia_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: animalia
+      MYSQL_USER: animalia
+      MYSQL_PASSWORD: animalia
     ports:
-      - "5173:5173"
+      - "3306:3306"
     volumes:
-      - .:/app
+      - mysql_data:/var/lib/mysql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    container_name: animalia_backend
+    ports:
+      - "3000:3000"
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: animalia
+      DB_PASSWORD: animalia
+      DB_NAME: animalia
+      PORT: 3000
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
       - /app/node_modules
     command: npm run dev
+
+  frontend:
+    build: ./frontend
+    container_name: animalia_frontend
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:3000
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm run dev -- --host 0.0.0.0
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: animalia_phpmyadmin
+    ports:
+      - "8080:80"
+    environment:
+      PMA_HOST: mysql
+      PMA_USER: animalia
+      PMA_PASSWORD: animalia
+    depends_on:
+      - mysql
+
+volumes:
+  mysql_data:
