@@ -21,6 +21,8 @@ import {
   User,
   Users,
   Navigation,
+  Sparkles,
+  Upload,
 } from "lucide-react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -35,6 +37,47 @@ const locationFilters = [
 ];
 
 const palette = ["#0f766e", "#2563eb", "#9333ea", "#ea580c", "#be123c", "#047857"];
+const OVIEDO_CENTER = { lat: 43.3614, lng: -5.8493 };
+
+function getDistanceKm(origin, destination) {
+  if (!origin || !destination) return Infinity;
+  const toRad = (value) => (Number(value) * Math.PI) / 180;
+  const radius = 6371;
+  const dLat = toRad(destination.lat) - toRad(origin.lat);
+  const dLng = toRad(destination.lng) - toRad(origin.lng);
+  const lat1 = toRad(origin.lat);
+  const lat2 = toRad(destination.lat);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return radius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function estimateRoute(origin, destination) {
+  const distanceKm = getDistanceKm(origin, destination);
+  return {
+    distanceKm: distanceKm.toFixed(2),
+    minutes: Math.max(1, Math.round((distanceKm / 4.5) * 60)),
+  };
+}
+
+function readImageFile(file) {
+  return new Promise((resolve, reject) => {
+    if (!file) return resolve("");
+    if (!file.type.startsWith("image/")) {
+      reject(new Error("El archivo debe ser una imagen."));
+      return;
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      reject(new Error("La imagen no puede superar los 4 MB."));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("No se pudo leer la imagen."));
+    reader.readAsDataURL(file);
+  });
+}
 
 function svgAvatar(seed, type = "person") {
   const text = (seed || "Animalia").trim();
@@ -103,6 +146,7 @@ export default function Animalia() {
   const [locationForm, setLocationForm] = useState({
     name: "",
     type: "parque",
+    address: "",
     lat: "43.3614",
     lng: "-5.8493",
     has_pets: true,
@@ -120,8 +164,11 @@ export default function Animalia() {
     city: "Oviedo",
     bio: "",
     theme_color: "#0f766e",
+    avatar_url: "",
+    pet_image_url: "",
   });
   const mapRef = useRef(null);
+  const mapContainerRef = useRef(null);
   const markersRef = useRef([]);
   const routeLayerRef = useRef(null);
   const userMarkerRef = useRef(null);
@@ -135,6 +182,14 @@ export default function Animalia() {
     });
   }, [locations, mapFilter, search]);
 
+  function clearRoute() {
+    if (routeLayerRef.current) {
+      routeLayerRef.current.remove();
+      routeLayerRef.current = null;
+    }
+    setRouteInfo(null);
+  }
+
   const selectedLocation = useMemo(
     () => locations.find((location) => location.id === selectedPark?.id),
     [locations, selectedPark]
@@ -142,6 +197,13 @@ export default function Animalia() {
 
   const parkCount = locations.filter((location) => location.type === "parque").length;
   const activePets = presences.length || locations.filter((location) => location.has_pets).length;
+  const recommendedLocation = useMemo(() => {
+    const origin = userPosition || OVIEDO_CENTER;
+    return locations
+      .filter((location) => location.has_pets)
+      .map((location) => ({ ...location, distance: getDistanceKm(origin, location) }))
+      .sort((a, b) => a.distance - b.distance || a.name.localeCompare(b.name))[0];
+  }, [locations, userPosition]);
 
   useEffect(() => {
     loadInitialData();
@@ -158,8 +220,8 @@ export default function Animalia() {
   useEffect(() => {
     if (currentView !== "map") return;
 
-    if (!mapRef.current) {
-      mapRef.current = L.map("map", {
+    if (!mapRef.current && mapContainerRef.current) {
+      mapRef.current = L.map(mapContainerRef.current, {
         zoomControl: true,
         scrollWheelZoom: true,
       }).setView([43.3614, -5.8493], 14);
@@ -167,7 +229,10 @@ export default function Animalia() {
       L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
         attribution: "© OpenStreetMap contributors © CARTO",
       }).addTo(mapRef.current);
+      setTimeout(() => mapRef.current?.invalidateSize(), 0);
     }
+
+    if (!mapRef.current) return;
 
     markersRef.current.forEach((marker) => marker.remove());
     markersRef.current = filteredLocations.map((location) => {
@@ -182,6 +247,7 @@ export default function Animalia() {
       `);
       marker.on("click", () => {
         setSelectedPark(location);
+        clearRoute();
         mapRef.current?.flyTo([Number(location.lat), Number(location.lng)], 16, { duration: 0.8 });
       });
 
@@ -200,6 +266,9 @@ export default function Animalia() {
       })
         .addTo(mapRef.current)
         .bindPopup("Tu ubicación");
+    } else if (userMarkerRef.current) {
+      userMarkerRef.current.remove();
+      userMarkerRef.current = null;
     }
 
     if (selectedLocation) {
@@ -208,7 +277,7 @@ export default function Animalia() {
       });
     }
 
-    setTimeout(() => mapRef.current?.invalidateSize(), 50);
+    requestAnimationFrame(() => mapRef.current?.invalidateSize());
 
     return () => {
       markersRef.current.forEach((marker) => marker.remove());
@@ -217,11 +286,29 @@ export default function Animalia() {
   }, [currentView, filteredLocations, selectedLocation, selectedPark?.id, userPosition]);
 
   useEffect(() => {
+    if (currentView === "map" || !mapRef.current) return;
+
+    markersRef.current.forEach((marker) => marker.remove());
+    markersRef.current = [];
+    if (routeLayerRef.current) {
+      routeLayerRef.current.remove();
+      routeLayerRef.current = null;
+    }
+    if (userMarkerRef.current) {
+      userMarkerRef.current.remove();
+      userMarkerRef.current = null;
+    }
+    mapRef.current.remove();
+    mapRef.current = null;
+  }, [currentView]);
+
+  useEffect(() => {
     return () => {
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
       }
+      mapContainerRef.current = null;
     };
   }, []);
 
@@ -260,6 +347,8 @@ export default function Animalia() {
         city: profile.city || "Oviedo",
         bio: profile.bio || "",
         theme_color: profile.theme_color || "#0f766e",
+        avatar_url: profile.avatar_url || "",
+        pet_image_url: profile.pet_image_url || "",
       }));
     }
   }, [profile]);
@@ -308,6 +397,20 @@ export default function Animalia() {
       setMessage("Publicación creada.");
     } catch (error) {
       setMessage(error.message);
+    }
+  }
+
+  async function handleImageInput(event, setter) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setter(await readImageFile(file));
+      setMessage("Imagen cargada.");
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      event.target.value = "";
     }
   }
 
@@ -439,6 +542,8 @@ export default function Animalia() {
           city: authForm.city,
           bio: authForm.bio,
           theme_color: authForm.theme_color,
+          avatar_url: authForm.avatar_url,
+          pet_image_url: authForm.pet_image_url,
         }),
       });
       localStorage.setItem("animalia_user", JSON.stringify(updatedUser));
@@ -504,6 +609,7 @@ export default function Animalia() {
       setLocationForm({
         name: "",
         type: "parque",
+        address: createdLocation.address || "",
         lat: String(createdLocation.lat),
         lng: String(createdLocation.lng),
         has_pets: true,
@@ -541,64 +647,98 @@ export default function Animalia() {
     );
   }
 
-  function locateUser() {
-    if (!navigator.geolocation) {
-      setMessage("Tu navegador no permite obtener ubicación.");
-      return;
-    }
+  function getBrowserPosition() {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject(new Error("Tu navegador no permite obtener ubicación."));
+        return;
+      }
 
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          resolve({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+            accuracy: position.coords.accuracy,
+          });
+        },
+        () => reject(new Error("No se pudo obtener tu ubicación.")),
+        { enableHighAccuracy: true, maximumAge: 30000, timeout: 12000 }
+      );
+    });
+  }
+
+  async function locateUser({ fallback = false } = {}) {
     setMessage("Buscando tu ubicación...");
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const coords = {
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        };
-        setUserPosition(coords);
-        setMessage("Ubicación detectada.");
-        mapRef.current?.flyTo([coords.lat, coords.lng], 15, { duration: 0.8 });
-      },
-      () => setMessage("No se pudo obtener tu ubicación."),
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
+    try {
+      const coords = await getBrowserPosition();
+      setUserPosition(coords);
+      setMessage(`Ubicación detectada${coords.accuracy ? ` (±${Math.round(coords.accuracy)} m)` : ""}.`);
+      mapRef.current?.flyTo([coords.lat, coords.lng], 15, { duration: 0.8 });
+      setTimeout(() => mapRef.current?.invalidateSize(), 100);
+      return coords;
+    } catch (error) {
+      if (!fallback) {
+        setMessage(error.message);
+        return null;
+      }
+      setUserPosition(OVIEDO_CENTER);
+      setMessage("No se pudo usar tu ubicación. Uso el centro de Oviedo como origen de prueba.");
+      mapRef.current?.flyTo([OVIEDO_CENTER.lat, OVIEDO_CENTER.lng], 14, { duration: 0.8 });
+      setTimeout(() => mapRef.current?.invalidateSize(), 100);
+      return OVIEDO_CENTER;
+    }
   }
 
   async function calculateRoute(location = selectedLocation) {
     if (!location) return;
 
-    if (!userPosition) {
-      locateUser();
-      setMessage("Primero activa tu ubicación. Después pulsa Ruta otra vez.");
-      return;
-    }
-
     setRouteLoading(true);
     try {
-      const url = `https://router.project-osrm.org/route/v1/foot/${userPosition.lng},${userPosition.lat};${location.lng},${location.lat}?overview=full&geometries=geojson`;
-      const response = await fetch(url);
-      const data = await response.json();
+      const origin = userPosition || (await locateUser({ fallback: true }));
+      if (!origin) return;
 
-      if (!response.ok || data.code !== "Ok" || !data.routes?.[0]) {
-        throw new Error("No se pudo calcular la ruta con OSRM.");
+      const url = `https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${location.lng},${location.lat}?overview=full&geometries=geojson`;
+      let routeInfoData;
+      let line;
+
+      try {
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (!response.ok || data.code !== "Ok" || !data.routes?.[0]) {
+          throw new Error("OSRM no devolvió una ruta válida.");
+        }
+
+        const route = data.routes[0];
+        line = route.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
+        routeInfoData = {
+          distanceKm: (route.distance / 1000).toFixed(2),
+          minutes: Math.max(1, Math.round(route.duration / 60)),
+        };
+      } catch (_error) {
+        line = [
+          [origin.lat, origin.lng],
+          [Number(location.lat), Number(location.lng)],
+        ];
+        routeInfoData = estimateRoute(origin, { lat: Number(location.lat), lng: Number(location.lng) });
       }
-
-      const route = data.routes[0];
-      const line = route.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
 
       if (routeLayerRef.current) routeLayerRef.current.remove();
       routeLayerRef.current = L.polyline(line, {
         color: "#0f766e",
-        weight: 6,
-        opacity: 0.85,
+        weight: 5,
+        opacity: 0.82,
+        dashArray: line.length === 2 ? "10 10" : null,
       }).addTo(mapRef.current);
 
       mapRef.current.fitBounds(routeLayerRef.current.getBounds(), { padding: [36, 36] });
       setRouteInfo({
-        distanceKm: (route.distance / 1000).toFixed(2),
-        minutes: Math.max(1, Math.round(route.duration / 60)),
+        ...routeInfoData,
         destination: location.name,
+        source: origin === OVIEDO_CENTER ? "centro de Oviedo" : "tu ubicación",
       });
-      setMessage(`Ruta calculada hasta ${location.name}.`);
+      setMessage(`Ruta estimada hasta ${location.name}.`);
     } catch (error) {
       setMessage(error.message);
     } finally {
@@ -633,6 +773,8 @@ export default function Animalia() {
         city: "Oviedo",
         bio: "",
         theme_color: "#0f766e",
+        avatar_url: "",
+        pet_image_url: "",
       });
       setMessage(`Hola, ${loggedUser.name}.`);
     } catch (error) {
@@ -648,8 +790,8 @@ export default function Animalia() {
 
   function selectLocation(location) {
     setSelectedPark(location);
+    clearRoute();
     mapRef.current?.flyTo([Number(location.lat), Number(location.lng)], 16, { duration: 0.8 });
-    if (userPosition) calculateRoute(location);
   }
 
   function focusAsturias() {
@@ -725,11 +867,11 @@ export default function Animalia() {
     </div>
   );
 
-  const Avatar = ({ name, type = "person", size = "md" }) => {
+  const Avatar = ({ name, type = "person", size = "md", src }) => {
     const classes = size === "lg" ? "h-20 w-20" : size === "sm" ? "h-10 w-10" : "h-12 w-12";
     return (
       <img
-        src={svgAvatar(name, type)}
+        src={src || svgAvatar(name, type)}
         alt={name}
         className={`${classes} rounded-full object-cover ring-2 ring-white shadow-sm`}
       />
@@ -772,7 +914,7 @@ export default function Animalia() {
             </div>
           </div>
 
-          <div className="rounded-[2rem] border border-white bg-white/75 p-5 shadow-xl backdrop-blur">
+          <div className="animalia-float animalia-soft-glow rounded-[2rem] border border-white bg-white/75 p-5 shadow-xl backdrop-blur">
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <p className="text-sm font-semibold text-teal-700">Actividad reciente</p>
@@ -783,7 +925,7 @@ export default function Animalia() {
             <div className="space-y-3">
               {posts.slice(0, 3).map((post) => (
                 <div key={post.id} className="flex gap-3 rounded-2xl bg-white p-3 shadow-sm">
-                  <Avatar name={post.user_name} />
+                  <Avatar name={post.user_name} src={post.user_avatar_url} />
                   <div>
                     <p className="font-semibold text-slate-900">{post.user_name}</p>
                     <p className="text-sm text-slate-600">{post.content}</p>
@@ -801,7 +943,7 @@ export default function Animalia() {
           ["Mapa vivo", "Filtra lugares, abre marcadores y registra tu mascota en parques.", MapPin],
           ["Perfil sencillo", "Tu cuenta guarda una mascota y muestra avatares locales.", Dog],
         ].map(([title, text, Icon]) => (
-          <div key={title} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div key={title} className="animalia-hover-card rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <Icon className="mb-4 h-9 w-9 text-teal-600" />
             <h2 className="text-xl font-bold text-slate-900">{title}</h2>
             <p className="mt-2 text-slate-600">{text}</p>
@@ -814,9 +956,9 @@ export default function Animalia() {
   const FeedView = () => (
     <main className="mx-auto grid max-w-6xl gap-6 px-4 py-8 lg:grid-cols-[1fr_320px]">
       <section>
-        <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="animalia-enter mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex gap-4">
-            {user ? <Avatar name={user.name} /> : <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100"><User /></div>}
+            {user ? <Avatar name={user.name} src={user.avatar_url} /> : <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100"><User /></div>}
             <div className="flex-1">
               <textarea
                 value={postContent}
@@ -829,13 +971,28 @@ export default function Animalia() {
                 value={postImage}
                 onChange={(event) => setPostImage(event.target.value)}
                 className="mt-3 w-full rounded-xl border border-slate-200 p-3 text-sm outline-none focus:ring-2 focus:ring-teal-500"
-                placeholder="URL de imagen opcional"
+                placeholder="URL de imagen opcional o sube un archivo"
               />
               <div className="mt-3 flex gap-2">
-                <button className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-slate-700 transition hover:bg-slate-200">
-                  <Camera className="h-4 w-4" />
-                  Foto pronto
-                </button>
+                <label className="flex cursor-pointer items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-slate-700 transition hover:bg-slate-200">
+                  <Upload className="h-4 w-4" />
+                  Subir foto
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) => handleImageInput(event, setPostImage)}
+                    className="sr-only"
+                  />
+                </label>
+                {postImage ? (
+                  <button
+                    type="button"
+                    onClick={() => setPostImage("")}
+                    className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-100"
+                  >
+                    Quitar imagen
+                  </button>
+                ) : null}
                 <button
                   onClick={handlePublish}
                   className="ml-auto rounded-xl bg-teal-600 px-6 py-2 font-semibold text-white transition hover:bg-teal-700"
@@ -843,6 +1000,13 @@ export default function Animalia() {
                   Publicar
                 </button>
               </div>
+              {postImage ? (
+                <img
+                  src={postImage}
+                  alt="Previsualización de la publicación"
+                  className="mt-3 max-h-56 w-full rounded-2xl object-cover"
+                />
+              ) : null}
             </div>
           </div>
         </div>
@@ -851,9 +1015,9 @@ export default function Animalia() {
           <div className="rounded-2xl bg-white p-8 text-center text-slate-500">Cargando comunidad...</div>
         ) : (
           posts.map((post) => (
-            <article key={post.id} className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <article key={post.id} className="animalia-enter animalia-hover-card mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="mb-4 flex items-center gap-3">
-                <Avatar name={post.user_name} />
+                <Avatar name={post.user_name} src={post.user_avatar_url} />
                 <div>
                   <button
                     onClick={() => openUserProfile(post.user_id)}
@@ -863,7 +1027,7 @@ export default function Animalia() {
                   </button>
                   <p className="text-sm text-slate-500">con {post.pet_name || "su mascota"}</p>
                 </div>
-                <Avatar name={post.pet_name || post.user_name} type="pet" size="sm" />
+                <Avatar name={post.pet_name || post.user_name} type="pet" size="sm" src={post.pet_image_url} />
               </div>
               <p className="mb-4 text-slate-800">{post.content}</p>
               {post.image_url ? (
@@ -892,7 +1056,7 @@ export default function Animalia() {
               <div className="mt-4 border-t border-slate-100 pt-4">
                 {commentsByPost[post.id]?.map((comment) => (
                   <div key={comment.id} className="mb-2 flex gap-2 rounded-xl bg-slate-50 p-3">
-                    <Avatar name={comment.user_name} size="sm" />
+                    <Avatar name={comment.user_name} size="sm" src={comment.user_avatar_url} />
                     <div>
                       <p className="text-sm font-semibold text-slate-900">{comment.user_name}</p>
                       <p className="text-sm text-slate-700">{comment.content}</p>
@@ -956,7 +1120,7 @@ export default function Animalia() {
                 onClick={() => openUserProfile(member.id)}
                 className="flex w-full items-center gap-3 rounded-xl bg-slate-50 p-3 text-left transition hover:bg-teal-50"
               >
-                <Avatar name={member.name} size="sm" />
+                <Avatar name={member.name} size="sm" src={member.avatar_url} />
                 <span className="min-w-0">
                   <span className="block truncate font-semibold text-slate-900">{member.name}</span>
                   <span className="block truncate text-sm text-slate-500">{member.pet_name} · {member.city || "Oviedo"}</span>
@@ -970,18 +1134,23 @@ export default function Animalia() {
   );
 
   const ProfileCard = () => (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="animalia-enter overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       {user ? (
         <>
-          <div className="flex items-center gap-4">
-            <Avatar name={user.name} size="lg" />
-            <div>
+          <div
+            className="h-20"
+            style={{ background: `linear-gradient(135deg, ${profile?.theme_color || user.theme_color || "#0f766e"}, #99f6e4)` }}
+          />
+          <div className="-mt-9 px-5">
+          <div className="flex items-end gap-4">
+            <Avatar name={user.name} size="lg" src={user.avatar_url} />
+            <div className="pb-2">
               <h2 className="text-xl font-bold text-slate-900">{user.name}</h2>
               <p className="text-sm text-slate-500">{user.email}</p>
             </div>
           </div>
           <div className="mt-5 flex items-center gap-4 rounded-2xl bg-teal-50 p-4">
-            <Avatar name={user.pet_name} type="pet" />
+            <Avatar name={user.pet_name} type="pet" src={user.pet_image_url} />
             <div>
               <p className="font-semibold text-slate-900">{user.pet_name}</p>
               <p className="text-sm text-slate-600">{user.breed}</p>
@@ -1022,6 +1191,44 @@ export default function Animalia() {
           ) : null}
           <form onSubmit={handleProfileUpdate} className="mt-4 space-y-2 rounded-2xl border border-slate-200 p-3">
             <p className="text-sm font-semibold text-slate-700">Personalización</p>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-200">
+                <Camera className="h-4 w-4" />
+                Foto perfil
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(event) =>
+                    handleImageInput(event, (value) => setAuthForm((current) => ({ ...current, avatar_url: value })))
+                  }
+                  className="sr-only"
+                />
+              </label>
+              <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-200">
+                <Dog className="h-4 w-4" />
+                Foto mascota
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(event) =>
+                    handleImageInput(event, (value) => setAuthForm((current) => ({ ...current, pet_image_url: value })))
+                  }
+                  className="sr-only"
+                />
+              </label>
+            </div>
+            <input
+              value={authForm.avatar_url}
+              onChange={(event) => setAuthForm({ ...authForm, avatar_url: event.target.value })}
+              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500"
+              placeholder="URL de foto de perfil"
+            />
+            <input
+              value={authForm.pet_image_url}
+              onChange={(event) => setAuthForm({ ...authForm, pet_image_url: event.target.value })}
+              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500"
+              placeholder="URL de foto de mascota"
+            />
             <input
               value={authForm.city}
               onChange={(event) => setAuthForm({ ...authForm, city: event.target.value })}
@@ -1054,9 +1261,10 @@ export default function Animalia() {
             <LogOut className="h-4 w-4" />
             Cerrar sesión
           </button>
+          </div>
         </>
       ) : (
-        <>
+        <div className="p-5">
           <h2 className="text-xl font-bold text-slate-900">Tu perfil</h2>
           <p className="mt-2 text-slate-600">Entra para publicar y registrar tu mascota en un parque.</p>
           <button
@@ -1065,7 +1273,7 @@ export default function Animalia() {
           >
             Entrar o registrarme
           </button>
-        </>
+        </div>
       )}
     </div>
   );
@@ -1084,13 +1292,13 @@ export default function Animalia() {
   const MapView = () => (
     <main className="grid h-[calc(100vh-4rem)] overflow-hidden bg-slate-100 lg:grid-cols-[1fr_420px]">
       <section className="relative min-h-0">
-        <div id="map" className="h-full min-h-[520px] w-full" />
+        <div ref={mapContainerRef} className="h-full min-h-[520px] w-full" />
         <div className="absolute left-4 top-4 z-[400] rounded-2xl bg-white/95 p-3 shadow-lg backdrop-blur">
           <p className="text-sm font-semibold text-slate-900">Mapa interactivo</p>
           <p className="text-xs text-slate-500">Arrastra, acerca, toca y calcula ruta.</p>
           {routeInfo ? (
             <p className="mt-2 rounded-xl bg-teal-50 px-3 py-2 text-xs font-semibold text-teal-800">
-              {routeInfo.distanceKm} km · {routeInfo.minutes} min hasta {routeInfo.destination}
+              {routeInfo.distanceKm} km · {routeInfo.minutes} min desde {routeInfo.source} hasta {routeInfo.destination}
             </p>
           ) : null}
         </div>
@@ -1125,7 +1333,7 @@ export default function Animalia() {
           </div>
           <div className="mt-3 grid grid-cols-2 gap-2">
             <button
-              onClick={locateUser}
+              onClick={() => locateUser({ fallback: true })}
               className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
             >
               <Compass className="h-4 w-4" />
@@ -1161,6 +1369,23 @@ export default function Animalia() {
             <Plus className="h-4 w-4" />
             {showLocationForm ? "Cerrar alta de lugar" : "Añadir ubicación"}
           </button>
+          {recommendedLocation ? (
+            <button
+              onClick={() => selectLocation(recommendedLocation)}
+              className="mt-3 flex w-full items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-left text-sm text-amber-900 transition hover:bg-amber-100"
+            >
+              <Sparkles className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                <span className="block font-bold">Recomendación rápida</span>
+                <span className="block">
+                  {recommendedLocation.name}
+                  {Number.isFinite(recommendedLocation.distance)
+                    ? ` · ${recommendedLocation.distance.toFixed(1)} km aprox.`
+                    : ""}
+                </span>
+              </span>
+            </button>
+          ) : null}
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
@@ -1190,6 +1415,12 @@ export default function Animalia() {
                   <option value="tienda">Tienda</option>
                   <option value="peluqueria">Peluquería</option>
                 </select>
+                <input
+                  value={locationForm.address}
+                  onChange={(event) => setLocationForm({ ...locationForm, address: event.target.value })}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-teal-500"
+                  placeholder="Dirección exacta"
+                />
                 <div className="grid grid-cols-2 gap-2">
                   <input
                     value={locationForm.lat}
@@ -1247,6 +1478,9 @@ export default function Animalia() {
                   <div>
                     <h3 className="text-xl font-bold text-slate-900">{selectedLocation.name}</h3>
                     <p className="text-sm text-slate-600">{labelForType(selectedLocation.type)}</p>
+                    {selectedLocation.address ? (
+                      <p className="text-sm font-medium text-slate-500">{selectedLocation.address}</p>
+                    ) : null}
                   </div>
                 </div>
 
@@ -1257,7 +1491,7 @@ export default function Animalia() {
                   ) : (
                     presences.map((entry) => (
                       <div key={entry.id} className="flex items-center gap-3 rounded-xl bg-white p-3 shadow-sm">
-                        <Avatar name={entry.pet_name} type="pet" />
+                        <Avatar name={entry.pet_name} type="pet" src={entry.pet_image_url} />
                         <div className="min-w-0 flex-1">
                           <p className="font-semibold text-slate-900">{entry.pet_name}</p>
                           <p className="text-sm text-slate-600">{entry.breed}</p>
@@ -1265,7 +1499,7 @@ export default function Animalia() {
                             {entry.owner_name} · {formatPresenceTime(entry.last_seen_at)}
                           </p>
                         </div>
-                        <Avatar name={entry.owner_name} size="sm" />
+                        <Avatar name={entry.owner_name} size="sm" src={entry.owner_avatar_url} />
                       </div>
                     ))
                   )}
@@ -1335,7 +1569,9 @@ export default function Animalia() {
           <p className="mt-2 text-slate-600">Planes sencillos para pasear, socializar y descubrir sitios con mascotas.</p>
         </div>
         {events.map((event) => (
-          <article key={event.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <article key={event.id} className="animalia-enter animalia-hover-card overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div className="h-2 bg-gradient-to-r from-teal-500 via-emerald-400 to-amber-300" />
+            <div className="p-5">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-xl font-bold text-slate-900">{event.title}</h2>
@@ -1349,6 +1585,10 @@ export default function Animalia() {
               <span className="flex items-center gap-2">
                 <MapPin className="h-4 w-4 text-teal-700" />
                 {event.location_name}
+              </span>
+              <span className="flex items-center gap-2 sm:col-span-3">
+                <MapPin className="h-4 w-4 text-teal-700" />
+                {event.location_address || "Dirección pendiente de confirmar"}
               </span>
               <span className="flex items-center gap-2">
                 <User className="h-4 w-4 text-teal-700" />
@@ -1365,12 +1605,13 @@ export default function Animalia() {
             >
               Apuntarme
             </button>
+            </div>
           </article>
         ))}
       </section>
 
       <aside>
-        <form onSubmit={handleCreateEvent} className="sticky top-24 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <form onSubmit={handleCreateEvent} className="animalia-soft-glow sticky top-24 rounded-2xl border border-teal-100 bg-white p-5 shadow-sm">
           <h2 className="text-xl font-bold text-slate-900">Crear quedada</h2>
           <p className="mt-1 text-sm text-slate-500">Elige un lugar del mapa y una fecha.</p>
           <div className="mt-4 space-y-3">
@@ -1427,7 +1668,7 @@ export default function Animalia() {
           style={{ background: publicProfile.theme_color || "#0f766e" }}
         />
         <div className="-mt-14 flex items-end gap-4 px-3">
-          <Avatar name={publicProfile.name} size="lg" />
+          <Avatar name={publicProfile.name} size="lg" src={publicProfile.avatar_url} />
           <div className="pb-2">
             <h2 className="text-2xl font-bold text-slate-900">{publicProfile.name}</h2>
             <p className="text-sm text-slate-500">{publicProfile.city || "Oviedo"}</p>
@@ -1437,7 +1678,7 @@ export default function Animalia() {
           {publicProfile.bio || "Perfil Animalia sin biografía todavía."}
         </p>
         <div className="mt-4 flex items-center gap-3 rounded-xl bg-teal-50 p-4">
-          <Avatar name={publicProfile.pet_name} type="pet" />
+          <Avatar name={publicProfile.pet_name} type="pet" src={publicProfile.pet_image_url} />
           <div>
             <p className="font-semibold text-slate-900">{publicProfile.pet_name}</p>
             <p className="text-sm text-slate-600">{publicProfile.breed}</p>
@@ -1535,6 +1776,32 @@ export default function Animalia() {
                 className="w-full resize-none rounded-xl border border-slate-200 p-3 outline-none focus:ring-2 focus:ring-teal-500"
                 rows="2"
               />
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-200">
+                  <Camera className="h-4 w-4" />
+                  Foto perfil
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) =>
+                      handleImageInput(event, (value) => setAuthForm((current) => ({ ...current, avatar_url: value })))
+                    }
+                    className="sr-only"
+                  />
+                </label>
+                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-200">
+                  <Dog className="h-4 w-4" />
+                  Foto mascota
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) =>
+                      handleImageInput(event, (value) => setAuthForm((current) => ({ ...current, pet_image_url: value })))
+                    }
+                    className="sr-only"
+                  />
+                </label>
+              </div>
               <div className="flex items-center gap-3 rounded-xl border border-slate-200 p-3">
                 <span className="text-sm font-semibold text-slate-600">Color</span>
                 <input
@@ -1601,7 +1868,7 @@ export default function Animalia() {
                 onClick={() => setCurrentView("feed")}
                 className="ml-1 flex items-center gap-2 rounded-xl bg-teal-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-teal-700"
               >
-                <Avatar name={user.name} size="sm" />
+                <Avatar name={user.name} size="sm" src={user.avatar_url} />
                 <span className="hidden md:inline">{user.name}</span>
               </button>
             ) : (
@@ -1626,10 +1893,10 @@ export default function Animalia() {
         </button>
       ) : null}
 
-      {currentView === "home" && <HomeView />}
-      {currentView === "feed" && <FeedView />}
-      {currentView === "map" && <MapView />}
-      {currentView === "events" && <EventsView />}
+      {currentView === "home" && HomeView()}
+      {currentView === "feed" && FeedView()}
+      {currentView === "map" && MapView()}
+      {currentView === "events" && EventsView()}
       {showLogin && <LoginModal />}
       {publicProfile && <PublicProfileModal />}
 
