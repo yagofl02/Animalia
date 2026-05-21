@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
   city VARCHAR(120) DEFAULT 'Oviedo',
   bio VARCHAR(500) DEFAULT '',
   theme_color VARCHAR(20) DEFAULT '#0f766e',
+  avatar_url MEDIUMTEXT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -17,6 +18,7 @@ CREATE TABLE IF NOT EXISTS pets (
   user_id INT NOT NULL,
   name VARCHAR(120) NOT NULL,
   breed VARCHAR(120) NOT NULL,
+  image_url MEDIUMTEXT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_pets_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -25,6 +27,7 @@ CREATE TABLE IF NOT EXISTS locations (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(180) NOT NULL,
   type VARCHAR(60) NOT NULL,
+  address VARCHAR(240) DEFAULT '',
   lat DECIMAL(10, 7) NOT NULL,
   lng DECIMAL(10, 7) NOT NULL,
   has_pets BOOLEAN DEFAULT FALSE
@@ -35,7 +38,7 @@ CREATE TABLE IF NOT EXISTS posts (
   user_id INT NOT NULL,
   pet_id INT NULL,
   content TEXT NOT NULL,
-  image_url VARCHAR(500) NULL,
+  image_url MEDIUMTEXT NULL,
   likes INT DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_posts_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -112,7 +115,12 @@ INSERT INTO users (id, name, email, password) VALUES
   (12, 'Clara B.', 'clara@example.com', '123456'),
   (13, 'Mateo D.', 'mateo@example.com', '123456'),
   (14, 'Irene A.', 'irene@example.com', '123456'),
-  (15, 'Raúl H.', 'raul@example.com', '123456');
+  (15, 'Raúl H.', 'raul@example.com', '123456'),
+  (16, 'Lucía V.', 'lucia@example.com', '123456'),
+  (17, 'Mario Q.', 'mario@example.com', '123456'),
+  (18, 'Noelia P.', 'noelia@example.com', '123456'),
+  (19, 'Adrián S.', 'adrian@example.com', '123456'),
+  (20, 'Vera M.', 'vera@example.com', '123456');
 
 INSERT INTO pets (id, user_id, name, breed) VALUES
   (1, 1, 'Luna', 'Golden Retriever'),
@@ -129,7 +137,31 @@ INSERT INTO pets (id, user_id, name, breed) VALUES
   (12, 12, 'Simba', 'Gato Europeo'),
   (13, 13, 'Leo', 'Cocker Spaniel'),
   (14, 14, 'Duna', 'Galgo'),
-  (15, 15, 'Otto', 'Schnauzer');
+  (15, 15, 'Otto', 'Schnauzer'),
+  (16, 16, 'Mora', 'Mestiza'),
+  (17, 17, 'Bowie', 'Teckel'),
+  (18, 18, 'Lía', 'Setter'),
+  (19, 19, 'Ringo', 'Podenco'),
+  (20, 20, 'Trufa', 'Corgi');
+
+UPDATE users SET avatar_url = CASE id
+  WHEN 1 THEN 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=400&q=80'
+  WHEN 2 THEN 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=400&q=80'
+  WHEN 6 THEN 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80'
+  WHEN 16 THEN 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=400&q=80'
+  WHEN 18 THEN 'https://images.unsplash.com/photo-1531123897727-8f129e1688ce?auto=format&fit=crop&w=400&q=80'
+  ELSE avatar_url
+END;
+
+UPDATE pets SET image_url = CASE id
+  WHEN 1 THEN 'https://images.unsplash.com/photo-1552053831-71594a27632d?auto=format&fit=crop&w=400&q=80'
+  WHEN 6 THEN 'https://images.unsplash.com/photo-1537151625747-768eb6cf92b2?auto=format&fit=crop&w=400&q=80'
+  WHEN 9 THEN 'https://images.unsplash.com/photo-1517849845537-4d257902454a?auto=format&fit=crop&w=400&q=80'
+  WHEN 16 THEN 'https://images.unsplash.com/photo-1558788353-f76d92427f16?auto=format&fit=crop&w=400&q=80'
+  WHEN 18 THEN 'https://images.unsplash.com/photo-1507146426996-ef05306b995a?auto=format&fit=crop&w=400&q=80'
+  WHEN 20 THEN 'https://images.unsplash.com/photo-1518717758536-85ae29035b6d?auto=format&fit=crop&w=400&q=80'
+  ELSE image_url
+END;
 
 INSERT INTO locations (id, name, type, lat, lng, has_pets) VALUES
   (1, 'Clínica Veterinaria Centro - Oviedo', 'veterinario', 43.362, -5.844, false),
@@ -201,7 +233,17 @@ INSERT INTO locations (id, name, type, lat, lng, has_pets) VALUES
   (65, 'Parque canino Fozaneldi - Oviedo', 'parque', 43.3611, -5.8319, true),
   (66, 'Parque canino Montecerrao - Oviedo', 'parque', 43.3520, -5.8675, true),
   (67, 'Senda Verde Oviedo-Fuso', 'parque', 43.3435, -5.8725, true),
-  (68, 'Parque de Vetusta - Oviedo', 'parque', 43.3558, -5.8347, true);
+  (68, 'Parque de Vetusta - Oviedo', 'parque', 43.3558, -5.8347, true),
+  (69, 'Área canina de La Losa - Oviedo', 'parque', 43.3660, -5.8542, true),
+  (70, 'Parque del Truébano - Oviedo', 'parque', 43.3707, -5.8358, true),
+  (71, 'Senda del Nora - Lugones', 'parque', 43.4081, -5.8085, true),
+  (72, 'Clínica Veterinaria Tenderina - Oviedo', 'veterinario', 43.3643, -5.8276, false),
+  (73, 'Tienda Mascotas El Cristo - Oviedo', 'tienda', 43.3534, -5.8638, false),
+  (74, 'Peluquería Canina San Lázaro - Oviedo', 'peluqueria', 43.3552, -5.8396, false),
+  (75, 'Ruta del Parque de Invierno a Fuso', 'parque', 43.3437, -5.8735, true),
+  (76, 'Paseo fluvial de Priañes', 'parque', 43.3757, -5.9508, true),
+  (77, 'Clínica Veterinaria Montevil - Gijón', 'veterinario', 43.5236, -5.6747, false),
+  (78, 'Parque canino Viesques - Gijón', 'parque', 43.5297, -5.6379, true);
 
 INSERT INTO posts (user_id, pet_id, content, image_url, likes) VALUES
   (1, 1, '¡Día perfecto en el parque!', 'https://images.unsplash.com/photo-1552053831-71594a27632d?auto=format&fit=crop&w=1200&q=80', 24),
@@ -218,7 +260,12 @@ INSERT INTO posts (user_id, pet_id, content, image_url, likes) VALUES
   (12, 12, 'Simba observa la vida desde casa, pero saluda.', 'https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?auto=format&fit=crop&w=1200&q=80', 19),
   (13, 13, 'Leo quiere conocer Parque Purificación Tomás.', NULL, 11),
   (14, 14, 'Duna disfruta de paseos calmados.', 'https://images.unsplash.com/photo-1587300003388-59208cc962cb?auto=format&fit=crop&w=1200&q=80', 16),
-  (15, 15, 'Otto se estrena en Animalia.', NULL, 5);
+  (15, 15, 'Otto se estrena en Animalia.', NULL, 5),
+  (16, 16, 'Mora encontró sombra y agua en La Losa. Muy recomendable.', 'https://images.unsplash.com/photo-1558788353-f76d92427f16?auto=format&fit=crop&w=1200&q=80', 13),
+  (17, 17, 'Bowie necesita rutas cortas: patas pequeñas, mucha actitud.', NULL, 10),
+  (18, 18, 'Lía probó la senda del Nora y volvió feliz.', 'https://images.unsplash.com/photo-1507146426996-ef05306b995a?auto=format&fit=crop&w=1200&q=80', 22),
+  (19, 19, 'Ringo busca compis para correr por Montecerrao.', NULL, 8),
+  (20, 20, 'Trufa aprueba la tienda de El Cristo: premio incluido.', 'https://images.unsplash.com/photo-1518717758536-85ae29035b6d?auto=format&fit=crop&w=1200&q=80', 17);
 
 INSERT INTO park_presences (location_id, user_id, pet_id, last_seen_at) VALUES
   (4, 1, 1, NOW()),
@@ -233,18 +280,31 @@ INSERT INTO park_presences (location_id, user_id, pet_id, last_seen_at) VALUES
   (29, 5, 5, NOW()),
   (38, 1, 1, NOW()),
   (41, 2, 2, NOW()),
-  (43, 3, 3, NOW());
+  (43, 3, 3, NOW()),
+  (69, 16, 16, NOW()),
+  (70, 17, 17, NOW()),
+  (71, 18, 18, NOW()),
+  (75, 19, 19, NOW()),
+  (78, 20, 20, NOW());
 
 INSERT INTO comments (post_id, user_id, content) VALUES
   (1, 2, '¡Nos apuntamos al próximo paseo!'),
   (1, 4, 'Luna siempre sale guapísima en el parque.'),
   (2, 1, 'Yo suelo ir por San Francisco por las tardes.'),
-  (3, 5, 'Gracias por la recomendación, me viene genial.');
+  (3, 5, 'Gracias por la recomendación, me viene genial.'),
+  (6, 16, 'Nala y Mora podrían correr juntas algún día.'),
+  (9, 18, 'Monte Naranco nunca falla.'),
+  (16, 1, 'La Losa queda muy bien para una ruta corta.'),
+  (18, 20, 'Me la apunto para este fin de semana.'),
+  (20, 15, 'Otto también quiere premio.');
 
 INSERT INTO events (id, user_id, location_id, title, description, event_date) VALUES
   (1, 1, 4, 'Paseo tranquilo por San Francisco', 'Quedada para socializar perros pequeños y medianos.', DATE_ADD(NOW(), INTERVAL 2 DAY)),
   (2, 2, 13, 'Tarde perruna en Gijón', 'Paseo por Isabel la Católica y café después.', DATE_ADD(NOW(), INTERVAL 5 DAY)),
-  (3, 3, 7, 'Ruta suave por Parque de Invierno', 'Plan para caminar una hora con mascotas sociables.', DATE_ADD(NOW(), INTERVAL 7 DAY));
+  (3, 3, 7, 'Ruta suave por Parque de Invierno', 'Plan para caminar una hora con mascotas sociables.', DATE_ADD(NOW(), INTERVAL 7 DAY)),
+  (4, 16, 69, 'Quedada rápida en La Losa', 'Media hora de paseo y socialización cerca del centro.', DATE_ADD(NOW(), INTERVAL 3 DAY)),
+  (5, 18, 71, 'Senda del Nora con parada para agua', 'Ruta tranquila para perros acostumbrados a caminar.', DATE_ADD(NOW(), INTERVAL 9 DAY)),
+  (6, 20, 78, 'Mañana canina en Viesques', 'Plan relajado para perros pequeños y medianos.', DATE_ADD(NOW(), INTERVAL 11 DAY));
 
 INSERT INTO event_attendees (event_id, user_id) VALUES
   (1, 1),
@@ -253,7 +313,13 @@ INSERT INTO event_attendees (event_id, user_id) VALUES
   (2, 2),
   (2, 5),
   (3, 1),
-  (3, 3);
+  (3, 3),
+  (4, 16),
+  (4, 1),
+  (5, 18),
+  (5, 19),
+  (6, 20),
+  (6, 17);
 
 INSERT INTO location_favorites (user_id, location_id) VALUES
   (1, 4),
@@ -261,4 +327,9 @@ INSERT INTO location_favorites (user_id, location_id) VALUES
   (2, 13),
   (3, 19),
   (4, 22),
-  (5, 29);
+  (5, 29),
+  (16, 69),
+  (17, 70),
+  (18, 71),
+  (19, 75),
+  (20, 78);

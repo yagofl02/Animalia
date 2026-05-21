@@ -9,7 +9,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "8mb" }));
 
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" });
@@ -18,7 +18,7 @@ app.get("/api/health", (_req, res) => {
 app.get("/api/locations", async (_req, res) => {
   try {
     const [rows] = await pool.query(
-      "SELECT id, name, type, lat, lng, has_pets FROM locations ORDER BY id"
+      "SELECT id, name, type, address, lat, lng, has_pets FROM locations ORDER BY id"
     );
     res.json(rows);
   } catch (error) {
@@ -28,7 +28,7 @@ app.get("/api/locations", async (_req, res) => {
 });
 
 app.post("/api/locations", async (req, res) => {
-  const { name, type, lat, lng, has_pets } = req.body;
+  const { name, type, address, lat, lng, has_pets } = req.body;
 
   if (!name?.trim() || !type || lat === undefined || lng === undefined) {
     return res.status(400).json({ error: "name, type, lat y lng son obligatorios" });
@@ -36,10 +36,10 @@ app.post("/api/locations", async (req, res) => {
 
   try {
     const [result] = await pool.query(
-      "INSERT INTO locations (name, type, lat, lng, has_pets) VALUES (?, ?, ?, ?, ?)",
-      [name.trim(), type, Number(lat), Number(lng), Boolean(has_pets)]
+      "INSERT INTO locations (name, type, address, lat, lng, has_pets) VALUES (?, ?, ?, ?, ?, ?)",
+      [name.trim(), type, address?.trim() || "", Number(lat), Number(lng), Boolean(has_pets)]
     );
-    res.status(201).json({ id: result.insertId, name, type, lat, lng, has_pets: Boolean(has_pets) });
+    res.status(201).json({ id: result.insertId, name, type, address: address?.trim() || "", lat, lng, has_pets: Boolean(has_pets) });
   } catch (error) {
     console.error("Error creando ubicación:", error);
     res.status(500).json({ error: "No se pudo crear la ubicación" });
@@ -57,7 +57,9 @@ app.get("/api/posts", async (_req, res) => {
         posts.likes,
         posts.created_at,
         users.name AS user_name,
+        users.avatar_url AS user_avatar_url,
         pets.name AS pet_name,
+        pets.image_url AS pet_image_url,
         COUNT(comments.id) AS comment_count
       FROM posts
       JOIN users ON users.id = posts.user_id
@@ -77,7 +79,7 @@ app.get("/api/posts/:id/comments", async (req, res) => {
   try {
     const [rows] = await pool.query(
       `
-      SELECT comments.id, comments.content, comments.created_at, users.name AS user_name
+      SELECT comments.id, comments.content, comments.created_at, users.name AS user_name, users.avatar_url AS user_avatar_url
       FROM comments
       JOIN users ON users.id = comments.user_id
       WHERE comments.post_id = ?
@@ -122,6 +124,7 @@ app.get("/api/events", async (_req, res) => {
         events.created_at,
         users.name AS organizer_name,
         locations.name AS location_name,
+        locations.address AS location_address,
         locations.lat,
         locations.lng,
         COUNT(event_attendees.id) AS attendee_count
@@ -188,9 +191,11 @@ app.get("/api/users/:id/profile", async (req, res) => {
         users.city,
         users.bio,
         users.theme_color,
+        users.avatar_url,
         pets.id AS pet_id,
         pets.name AS pet_name,
         pets.breed,
+        pets.image_url AS pet_image_url,
         (SELECT COUNT(*) FROM posts WHERE posts.user_id = users.id) AS post_count,
         (SELECT COUNT(*) FROM comments WHERE comments.user_id = users.id) AS comment_count,
         (SELECT COUNT(*) FROM location_favorites WHERE location_favorites.user_id = users.id) AS favorite_count,
@@ -217,8 +222,8 @@ app.get("/api/users/:id/profile", async (req, res) => {
 app.get("/api/users", async (_req, res) => {
   try {
     const [rows] = await pool.query(`
-      SELECT users.id, users.name, users.city, users.bio, users.theme_color,
-        pets.name AS pet_name, pets.breed,
+      SELECT users.id, users.name, users.city, users.bio, users.theme_color, users.avatar_url,
+        pets.name AS pet_name, pets.breed, pets.image_url AS pet_image_url,
         (SELECT COUNT(*) FROM posts WHERE posts.user_id = users.id) AS post_count
       FROM users
       LEFT JOIN pets ON pets.user_id = users.id
@@ -232,17 +237,21 @@ app.get("/api/users", async (_req, res) => {
 });
 
 app.put("/api/users/:id/profile", async (req, res) => {
-  const { name, city, bio, theme_color } = req.body;
+  const { name, city, bio, theme_color, avatar_url, pet_image_url } = req.body;
 
   try {
     await pool.query(
-      "UPDATE users SET name = COALESCE(?, name), city = ?, bio = ?, theme_color = ? WHERE id = ?",
-      [name || null, city || "", bio || "", theme_color || "#0f766e", req.params.id]
+      "UPDATE users SET name = COALESCE(?, name), city = ?, bio = ?, theme_color = ?, avatar_url = ? WHERE id = ?",
+      [name || null, city || "", bio || "", theme_color || "#0f766e", avatar_url || null, req.params.id]
+    );
+    await pool.query(
+      "UPDATE pets SET image_url = ? WHERE user_id = ? ORDER BY id LIMIT 1",
+      [pet_image_url || null, req.params.id]
     );
     const [[user]] = await pool.query(
       `
-      SELECT users.id, users.name, users.email, users.city, users.bio, users.theme_color,
-        pets.id AS pet_id, pets.name AS pet_name, pets.breed
+      SELECT users.id, users.name, users.email, users.city, users.bio, users.theme_color, users.avatar_url,
+        pets.id AS pet_id, pets.name AS pet_name, pets.breed, pets.image_url AS pet_image_url
       FROM users
       LEFT JOIN pets ON pets.user_id = users.id
       WHERE users.id = ?
@@ -345,8 +354,10 @@ app.get("/api/parks/:id/presences", async (req, res) => {
         park_presences.location_id,
         park_presences.last_seen_at,
         users.name AS owner_name,
+        users.avatar_url AS owner_avatar_url,
         pets.name AS pet_name,
-        pets.breed
+        pets.breed,
+        pets.image_url AS pet_image_url
       FROM park_presences
       JOIN users ON users.id = park_presences.user_id
       JOIN pets ON pets.id = park_presences.pet_id
@@ -386,7 +397,7 @@ app.post("/api/presences", async (req, res) => {
 });
 
 app.post("/api/register", async (req, res) => {
-  const { name, email, password, pet_name, breed, city, bio, theme_color } = req.body;
+  const { name, email, password, pet_name, breed, city, bio, theme_color, avatar_url, pet_image_url } = req.body;
 
   if (!name || !email || !password || !pet_name || !breed) {
     return res.status(400).json({ error: "Todos los campos son obligatorios" });
@@ -398,12 +409,12 @@ app.post("/api/register", async (req, res) => {
     await connection.beginTransaction();
     // TODO: En producción, guardar contraseñas con bcrypt en lugar de texto plano.
     const [userResult] = await connection.query(
-      "INSERT INTO users (name, email, password, city, bio, theme_color) VALUES (?, ?, ?, ?, ?, ?)",
-      [name, email, password, city || "Oviedo", bio || "", theme_color || "#0f766e"]
+      "INSERT INTO users (name, email, password, city, bio, theme_color, avatar_url) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [name, email, password, city || "Oviedo", bio || "", theme_color || "#0f766e", avatar_url || null]
     );
     const [petResult] = await connection.query(
-      "INSERT INTO pets (user_id, name, breed) VALUES (?, ?, ?)",
-      [userResult.insertId, pet_name, breed]
+      "INSERT INTO pets (user_id, name, breed, image_url) VALUES (?, ?, ?, ?)",
+      [userResult.insertId, pet_name, breed, pet_image_url || null]
     );
     await connection.commit();
 
@@ -414,9 +425,11 @@ app.post("/api/register", async (req, res) => {
       city: city || "Oviedo",
       bio: bio || "",
       theme_color: theme_color || "#0f766e",
+      avatar_url: avatar_url || null,
       pet_id: petResult.insertId,
       pet_name,
       breed,
+      pet_image_url: pet_image_url || null,
     });
   } catch (error) {
     await connection.rollback();
@@ -449,9 +462,11 @@ app.post("/api/login", async (req, res) => {
         users.city,
         users.bio,
         users.theme_color,
+        users.avatar_url,
         pets.id AS pet_id,
         pets.name AS pet_name,
-        pets.breed
+        pets.breed,
+        pets.image_url AS pet_image_url
       FROM users
       LEFT JOIN pets ON pets.user_id = users.id
       WHERE users.email = ? AND users.password = ?
@@ -476,7 +491,30 @@ app.use((_req, res) => {
   res.status(404).json({ error: "Ruta no encontrada" });
 });
 
+async function addColumnIfMissing(tableName, columnName, definition) {
+  const [[column]] = await pool.query(
+    `
+    SELECT COLUMN_NAME
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?
+    `,
+    [tableName, columnName]
+  );
+
+  if (!column) {
+    await pool.query(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  }
+}
+
+async function ensureSchema() {
+  await addColumnIfMissing("locations", "address", "VARCHAR(240) DEFAULT '' AFTER type");
+  await addColumnIfMissing("users", "avatar_url", "MEDIUMTEXT NULL AFTER theme_color");
+  await addColumnIfMissing("pets", "image_url", "MEDIUMTEXT NULL AFTER breed");
+  await pool.query("ALTER TABLE posts MODIFY image_url MEDIUMTEXT NULL");
+}
+
 waitForDatabase()
+  .then(ensureSchema)
   .then(() => {
     app.listen(PORT, () => {
       console.log(`🚀 Animalia API escuchando en http://localhost:${PORT}`);
