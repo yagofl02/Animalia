@@ -857,6 +857,9 @@ export default function Animalia() {
       src="/IMG/animalialogo.jpg"
       alt="Animalia"
       className={`${large ? "h-24 w-24 rounded-3xl" : "h-11 w-11 rounded-2xl"} object-cover shadow-sm ring-1 ring-teal-100`}
+      onError={(event) => {
+        event.currentTarget.src = svgAvatar("Animalia");
+      }}
     />
   );
 
@@ -869,11 +872,17 @@ export default function Animalia() {
 
   const Avatar = ({ name, type = "person", size = "md", src }) => {
     const classes = size === "lg" ? "h-20 w-20" : size === "sm" ? "h-10 w-10" : "h-12 w-12";
+    const fallbackSrc = svgAvatar(name, type);
     return (
       <img
-        src={src || svgAvatar(name, type)}
+        src={src || fallbackSrc}
         alt={name}
         className={`${classes} rounded-full object-cover ring-2 ring-white shadow-sm`}
+        onError={(event) => {
+          if (event.currentTarget.src !== fallbackSrc) {
+            event.currentTarget.src = fallbackSrc;
+          }
+        }}
       />
     );
   };
